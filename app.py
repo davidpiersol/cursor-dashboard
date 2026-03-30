@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import pandas as pd
 import plotly.express as px
@@ -34,6 +35,37 @@ def get_database_url() -> str | None:
         pass
     v = os.getenv("DATABASE_URL", "").strip()
     return v or None
+
+
+def database_url_placeholder_hint(url: str) -> str | None:
+    """If the URL still uses README example tokens, return a clear fix message."""
+    raw = url.strip()
+    if not raw:
+        return None
+    normalized = raw.replace("postgres://", "postgresql://", 1)
+    try:
+        p = urlparse(normalized)
+    except Exception:
+        return None
+    host = (p.hostname or "").lower()
+    user = (p.username or "").lower()
+    pwd = unquote(p.password or "")
+
+    if not p.hostname:
+        return "Your `DATABASE_URL` is missing a hostname (the part after `@`). Paste the full connection string from your database provider."
+
+    if host == "host":
+        return (
+            "Your `DATABASE_URL` still contains the **placeholder hostname `HOST`**. "
+            "Open Neon, Supabase, Railway, or your host’s dashboard, copy the **real** connection string "
+            "(hostname looks like `ep-xxxx.region.aws.neon.tech` or `db.xxxxx.supabase.co`), "
+            "and replace `USER`, `PASSWORD`, `HOST`, and `DATABASE` with those real values."
+        )
+    if user == "user" and pwd.upper() == "PASSWORD":
+        return (
+            "Replace **`USER`** and **`PASSWORD`** in `DATABASE_URL` with your real database user and password from the provider."
+        )
+    return None
 
 
 def _demo_events() -> pd.DataFrame:
@@ -140,14 +172,24 @@ if not _demo_mode() and not db_url:
         "**Streamlit Community Cloud:** open the app → **⋮ Manage app** → **Secrets** and add:\n"
     )
     st.code(
-        'DATABASE_URL = "postgresql://USER:PASSWORD@HOST:5432/DATABASE?sslmode=require"',
+        'DATABASE_URL = "postgresql://USER:PASSWORD@YOUR-REAL-HOSTNAME:5432/YOUR_DB_NAME?sslmode=require"',
         language="toml",
     )
     st.markdown(
-        "Use the same URL as on your machines (Neon/Supabase/Railway often require `sslmode=require`). "
-        "Redeploy after saving secrets."
+        "**Do not** leave the words `HOST`, `USER`, or `PASSWORD` from the example—paste the **full string** from your provider. "
+        "Neon/Supabase/Railway often require `sslmode=require`. Redeploy after saving secrets."
     )
     st.stop()
+
+if not _demo_mode() and db_url:
+    ph = database_url_placeholder_hint(db_url)
+    if ph:
+        st.error(ph)
+        st.markdown(
+            "In your provider, open **Connection details** / **Connection string** and copy the URI. "
+            "It should look like `postgresql://...@ep-something....neon.tech:5432/...`, not `...@HOST:5432/...`."
+        )
+        st.stop()
 
 df = load_events()
 allowance = load_allowance()
