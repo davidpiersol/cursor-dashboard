@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import psycopg
 import streamlit as st
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except ImportError:
+    pass
 
 st.set_page_config(page_title="Cursor Usage Dashboard", layout="wide")
 st.title("Cursor Usage Dashboard")
@@ -15,6 +22,18 @@ st.title("Cursor Usage Dashboard")
 
 def _demo_mode() -> bool:
     return os.getenv("CURSOR_USAGE_DEMO", "").strip().lower() in ("1", "true", "yes")
+
+
+def get_database_url() -> str | None:
+    if _demo_mode():
+        return None
+    try:
+        if "DATABASE_URL" in st.secrets:
+            return str(st.secrets["DATABASE_URL"]).strip() or None
+    except Exception:
+        pass
+    v = os.getenv("DATABASE_URL", "").strip()
+    return v or None
 
 
 def _demo_events() -> pd.DataFrame:
@@ -49,46 +68,62 @@ def _demo_events() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-@st.cache_resource
-def get_connection() -> psycopg.Connection:
-    db_url = os.getenv("DATABASE_URL")
-    if not db_url:
-        raise RuntimeError("DATABASE_URL is missing")
-    return psycopg.connect(db_url)
+_EVENTS_QUERY = """
+  select
+    captured_at,
+    session_start,
+    session_end,
+    session_minutes,
+    app_name,
+    model_name,
+    prompt_tokens,
+    completion_tokens,
+    total_tokens,
+    turns
+  from cursor_usage_events
+  order by captured_at desc
+"""
 
 
 @st.cache_data(ttl=120)
+def _load_events_from_db(database_url: str) -> pd.DataFrame:
+    with psycopg.connect(database_url, connect_timeout=20) as conn:
+        return pd.read_sql_query(_EVENTS_QUERY, conn)
+
+
+@st.cache_data(ttl=120)
+def _load_allowance_from_db(database_url: str) -> int:
+    with psycopg.connect(database_url, connect_timeout=20) as conn:
+        with conn.cursor() as cur:
+            cur.execute("select monthly_allowance_tokens from cursor_usage_settings where id = 1")
+            row = cur.fetchone()
+            return int(row[0] if row else 0)
+
+
 def load_events() -> pd.DataFrame:
     if _demo_mode():
         return _demo_events()
-    conn = get_connection()
-    query = """
-      select
-        captured_at,
-        session_start,
-        session_end,
-        session_minutes,
-        app_name,
-        model_name,
-        prompt_tokens,
-        completion_tokens,
-        total_tokens,
-        turns
-      from cursor_usage_events
-      order by captured_at desc
-    """
-    return pd.read_sql_query(query, conn)
+    url = get_database_url()
+    if not url:
+        return pd.DataFrame()
+    try:
+        return _load_events_from_db(url)
+    except Exception as e:
+        st.session_state["_db_error"] = f"{type(e).__name__}: {e}"
+        return pd.DataFrame()
 
 
-@st.cache_data(ttl=120)
 def load_allowance() -> int:
     if _demo_mode():
         return int(os.getenv("CURSOR_USAGE_DEMO_ALLOWANCE", "50000"))
-    conn = get_connection()
-    with conn.cursor() as cur:
-        cur.execute("select monthly_allowance_tokens from cursor_usage_settings where id = 1")
-        row = cur.fetchone()
-        return int(row[0] if row else 0)
+    url = get_database_url()
+    if not url:
+        return 0
+    try:
+        return _load_allowance_from_db(url)
+    except Exception as e:
+        st.session_state["_db_error"] = f"{type(e).__name__}: {e}"
+        return 0
 
 
 if _demo_mode():
@@ -97,11 +132,42 @@ if _demo_mode():
         "to use Postgres and the collector."
     )
 
+db_url = get_database_url()
+if not _demo_mode() and not db_url:
+    st.error("**DATABASE_URL is not configured.**")
+    st.markdown(
+        "Add your Postgres connection string so this app can load real usage from the collector.\n\n"
+        "**Streamlit Community Cloud:** open the app → **⋮ Manage app** → **Secrets** and add:\n"
+    )
+    st.code(
+        'DATABASE_URL = "postgresql://USER:PASSWORD@HOST:5432/DATABASE?sslmode=require"',
+        language="toml",
+    )
+    st.markdown(
+        "Use the same URL as on your machines (Neon/Supabase/Railway often require `sslmode=require`). "
+        "Redeploy after saving secrets."
+    )
+    st.stop()
+
 df = load_events()
 allowance = load_allowance()
 
-if df.empty:
-    st.info("No usage rows in `cursor_usage_events` yet. Run the collector first.")
+if st.session_state.get("_db_error"):
+    st.error(f"Database error: {st.session_state['_db_error']}")
+    st.caption("Check Secrets, firewall (allow cloud hosts if your DB is IP-restricted), and SSL (`sslmode=require` for Neon/Supabase).")
+    if st.button("Clear error and retry"):
+        st.session_state.pop("_db_error", None)
+        st.cache_data.clear()
+        st.rerun()
+    st.stop()
+
+st.session_state.pop("_db_error", None)
+
+if df.empty and not _demo_mode():
+    st.warning(
+        "Connected successfully, but **`cursor_usage_events` is empty.** "
+        "Run `collector.py` on your computers with the same `DATABASE_URL`."
+    )
     st.stop()
 
 df["captured_at"] = pd.to_datetime(df["captured_at"], utc=True)

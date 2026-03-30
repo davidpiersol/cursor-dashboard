@@ -90,13 +90,22 @@ where id = 1;
 streamlit run app.py
 ```
 
-## 7) Deploy dashboard to cloud
+## 7) Deploy to Streamlit Community Cloud (real data)
 
-Recommended: Streamlit Community Cloud or Render.
+1. Push this repo to GitHub and open [Streamlit Community Cloud](https://streamlit.io/cloud).
+2. **New app** → pick the repo, branch `main`, **Main file path:** `app.py`.
+3. **Secrets** (⋮ → **Settings** → **Secrets**): add your Postgres URL in TOML form (see `secrets.example.toml`). Example:
 
-- App entrypoint: `app.py`
-- Python deps: `requirements.txt`
-- Env var: `DATABASE_URL`
+   ```toml
+   DATABASE_URL = "postgresql://USER:PASSWORD@HOST:5432/DATABASE?sslmode=require"
+   ```
+
+   Use the **same** URL as your collector (Neon, Supabase, Railway, etc.). Managed Postgres often needs `sslmode=require` in the URL.
+4. **Do not** set `CURSOR_USAGE_DEMO` on Streamlit Cloud; the app reads `DATABASE_URL` from Secrets only (or env for other hosts).
+5. **Database:** allow inbound connections from the internet (or your provider’s “allow all” / Streamlit Cloud). If the DB is locked to fixed IPs, whitelist your provider’s docs or use a tunneling-friendly plan.
+6. Redeploy after changing Secrets.
+
+For Render or other hosts, set `DATABASE_URL` as an environment variable instead of Streamlit Secrets.
 
 ## Notes about token accuracy
 
