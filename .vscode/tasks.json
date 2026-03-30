@@ -1,0 +1,50 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Cursor Usage Dashboard: start (demo)",
+      "type": "shell",
+      "command": "${workspaceFolder}/.venv/bin/streamlit run ${workspaceFolder}/app.py --server.port 8501",
+      "options": {
+        "cwd": "${workspaceFolder}",
+        "env": {
+          "CURSOR_USAGE_DEMO": "1"
+        }
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^(.*)$",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "You can now view your Streamlit app in your browser"
+        }
+      }
+    },
+    {
+      "label": "Cursor Usage Dashboard: open in Simple Browser",
+      "type": "shell",
+      "command": "echo ${input:openDashboardBrowser}",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "never",
+        "echo": false,
+        "focus": false,
+        "panel": "shared"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "openDashboardBrowser",
+      "type": "command",
+      "command": "simpleBrowser.api.open",
+      "args": ["http://localhost:8501"]
+    }
+  ]
+}
